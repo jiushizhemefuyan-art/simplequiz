@@ -3,157 +3,217 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>10 題測驗</title>
+<title>測驗（穩定版）</title>
 <link rel="stylesheet" href="styles.css"/>
+<style>
+/* minimal fallback styling for options (ensure black text on white) */
+.opt{ display:block; padding:10px; margin:6px 0; background:#fff; color:#111; border:1px solid #ddd; border-radius:6px; text-align:left; }
+.opt.selected{ background:#dff5e0; color:#111; }
+.qbox{ margin:12px 0; padding:12px; border-radius:8px; border:1px solid #eee; background:#fafafa; }
+.prompt{ font-size:20px; margin-bottom:8px; }
+.status-debug{ font-size:13px; color:#b00; margin-top:8px; }
+</style>
 </head>
 <body>
-<header class="site-header"><h1 id="title">測驗</h1></header>
-
-<main class="container">
+<header><h1 id="title">測驗</h1></header>
+<main>
+  <div id="debug" class="status-debug"></div>
   <div id="question-area"></div>
 
-  <div id="controls" class="controls" style="display:none;">
+  <div id="controls" style="display:none; margin-top:10px;">
     <button id="prev" class="btn">上一題</button>
     <button id="next" class="btn">下一題</button>
-    <span id="progress" class="progress"></span>
+    <span id="progress" style="margin-left:12px"></span>
   </div>
 
-  <p><a class="link" href="index.html">← 返回選單</a></p>
+  <p style="margin-top:14px;"><a href="index.html">← 返回選單</a></p>
 </main>
 
-<script src="data.js"></script>
 <script>
-// 讀 URL 參數
-function qp(n){ return new URL(location.href).searchParams.get(n); }
+// helper to read query param
+function qp(k){ return new URL(location.href).searchParams.get(k); }
+const unit = parseInt(qp('u') || '1', 10);
+const rangeRaw = qp('range') || '1-10';
+const [start, end] = rangeRaw.split('-').map(x=>parseInt(x,10));
+const debugEl = document.getElementById('debug');
 
-const unit = parseInt(qp("u")||"1",10);
-const [start,end] = (qp("range")||"1-10").split("-").map(Number);
-
-document.getElementById("title").innerText = `Unit ${unit}：${start}-${end}（10 題）`;
-
-// 讀取正確題庫
-const all = (window.vocabByUnit["unit"+unit] || []);
-
-// 過濾範圍
-let pool = all.filter(x => x.id>=start && x.id<=end);
-
-// 若不足 10 題 → 從前面補
-if(pool.length < 10){
-  pool = pool.concat(all.slice(0, 10 - pool.length));
+function showDebug(msg, isErr){
+  debugEl.style.display = 'block';
+  debugEl.textContent = (isErr? '錯誤: ':'') + msg;
+  if(isErr) console.error(msg); else console.log(msg);
 }
 
-// 洗牌
-function shuffle(a){
-  for(let i=a.length-1;i>0;i--){
-    const j = Math.floor(Math.random()*(i+1));
-    [a[i],a[j]]=[a[j],a[i]];
+// robust loader: ensure data.js is loaded, support vocabByUnit and vocabData
+async function ensureDataLoaded(timeoutMs=3000){
+  // if vocabByUnit already present, done
+  if(window.vocabByUnit && Object.keys(window.vocabByUnit).length>0){
+    return { ok:true, source:'vocabByUnit' };
+  }
+  // if old vocabData present, done
+  if(window.vocabData && window.vocabData.length>0){
+    return { ok:true, source:'vocabData' };
+  }
+
+  // try to dynamically load data.js from same folder
+  try{
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = './data.js';
+      s.onload = ()=>resolve();
+      s.onerror = ()=>reject(new Error('載入 data.js 失敗 (network/file)'));
+      document.head.appendChild(s);
+    });
+    // give it a tiny moment
+    await new Promise(r=>setTimeout(r,100));
+    if(window.vocabByUnit && Object.keys(window.vocabByUnit).length>0) return {ok:true, source:'vocabByUnit'};
+    if(window.vocabData && window.vocabData.length>0) return {ok:true, source:'vocabData'};
+    return { ok:false, message:'data.js 載入但找不到 vocabByUnit 或 vocabData' };
+  }catch(e){
+    return { ok:false, message: e.message || String(e) };
   }
 }
-shuffle(pool);
 
-// 取 10 題
-const questions = pool.slice(0,10);
+// convert vocabByUnit -> flat vocabData if needed
+function makeVocabDataFromByUnit(){
+  if(!window.vocabData || !window.vocabData.length){
+    window.vocabData = [];
+    Object.keys(window.vocabByUnit || {}).forEach(k=>{
+      const unitNum = parseInt(k.replace(/[^\d]/g,''),10) || 0;
+      (window.vocabByUnit[k]||[]).forEach(item=>{
+        window.vocabData.push(Object.assign({unit: unitNum}, item));
+      });
+    });
+  }
+}
 
-// 顯示控制
-let idx = 0;
-let answers = new Array(questions.length).fill(null);
+// main run
+(async function main(){
+  const res = await ensureDataLoaded();
+  if(!res.ok){
+    showDebug('無法讀取 data.js：' + (res.message || '未知錯誤') + '。請確認 data.js 與 quiz.html 放在同一資料夾，或在瀏覽器開 DevTools -> Network 檢查 data.js 是否 200。', true);
+    return;
+  }
+  showDebug('成功載入資料 (來源: ' + res.source + ')');
 
-const qArea = document.getElementById("question-area");
-const controls = document.getElementById("controls");
-const prevBtn = document.getElementById("prev");
-const nextBtn = document.getElementById("next");
-const progress = document.getElementById("progress");
+  // normalize so code below can rely on vocabByUnit or vocabData
+  if(window.vocabByUnit && Object.keys(window.vocabByUnit).length>0){
+    // ensure numeric keys present as strings are fine
+  } else if(window.vocabData && window.vocabData.length>0){
+    // build vocabByUnit from old format
+    window.vocabByUnit = {};
+    window.vocabData.forEach(item=>{
+      const u = 'unit' + item.unit;
+      if(!window.vocabByUnit[u]) window.vocabByUnit[u]=[];
+      const id = item.id !== undefined? item.id : (window.vocabByUnit[u].length+1);
+      window.vocabByUnit[u].push({ id: id, word: item.word || item.text || '', meaning: item.meaning || item.definition || '' });
+    });
+  } else {
+    showDebug('資料載入後仍無法解析成題庫', true);
+    return;
+  }
 
-// 渲染題目
-function render(){
-  if(idx<0) idx=0;
-  if(idx>=questions.length) idx=questions.length-1;
+  // now extract unit data (works whether units are numeric keys or "unit1" strings)
+  let unitKey = 'unit' + unit;
+  let unitObj = window.vocabByUnit[unitKey] || window.vocabByUnit[unit] || window.vocabByUnit[String(unit)];
+  if(!unitObj || unitObj.length===0){
+    showDebug('找不到單元 ' + unit + ' 的資料，請確認 data.js 含有 unit' + unit + ' 或以數字 key 儲存。', true);
+    return;
+  }
 
-  const q = questions[idx];
-
-  qArea.innerHTML = `
-    <div class="qbox">
-      <h2>題 ${idx+1}</h2>
-      <div class="prompt">${q.word}</div>
-      <div class="meaning">(請選出正確中文意思)</div>
-    </div>
-  `;
-
-  const opts = document.createElement("div");
-  opts.className = "opts";
-
-  // 建立四個選項
-  let choices = [q.meaning];
-
-  let others = all.filter(x => x.meaning !== q.meaning)
-                  .sort(()=>Math.random()-0.5)
-                  .slice(0,3)
-                  .map(x => x.meaning);
-
-  choices = choices.concat(others).sort(()=>Math.random()-0.5);
-
-  q.options = choices;
-  q.answerIndex = choices.indexOf(q.meaning);
-
-  choices.forEach((c,i)=>{
-    const b = document.createElement("button");
-    b.className = "opt";
-    b.textContent = c;
-
-    if(answers[idx] === i) b.classList.add("selected");
-
-    b.onclick = ()=>{ answers[idx]=i; render(); };
-
-    opts.appendChild(b);
+  // ensure every item has id, word, meaning
+  const normalized = unitObj.map((it, idx) => {
+    return {
+      id: (it.id !== undefined)? Number(it.id) : (idx+1),
+      word: it.word || it.word || (it.text||''),
+      meaning: it.meaning || it.definition || it.desc || ''
+    };
   });
 
-  qArea.querySelector(".qbox").appendChild(opts);
-
-  controls.style.display = "block";
-  progress.textContent = `已答 ${answers.filter(x=>x!==null).length} / ${questions.length}`;
-
-  prevBtn.disabled = (idx===0);
-  nextBtn.textContent = (idx===questions.length-1)?"完成並看結果":"下一題";
-}
-
-// 顯示結果
-function showResult(){
-  let correct = 0;
-  let html = '<h2>結果</h2><ol class="result-list">';
-
-  for(let i=0;i<questions.length;i++){
-    const q = questions[i];
-    const a = answers[i];
-
-    if(a === q.answerIndex) correct++;
-
-    html += `
-      <li>
-        <div class="qtitle">${q.word}</div>
-        <div>你的答案：${a===null?"-":q.options[a]}</div>
-        <div>正確答案：${q.meaning}</div>
-      </li>`;
+  // produce pool by range
+  let pool = normalized.filter(x => x.id >= start && x.id <= end);
+  if(pool.length < 10){
+    // pad from start of normalized
+    const pad = normalized.filter(x=> !(pool.some(p=>p.id===x.id))).slice(0, 10-pool.length);
+    pool = pool.concat(pad);
   }
 
-  html += `</ol><p class="score">得分：${correct} / ${questions.length}</p>
-           <p><a class="btn" href="index.html">回選單</a></p>`;
+  // shuffle and pick 10
+  function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
+  shuffle(pool);
+  const questions = pool.slice(0,10);
 
-  qArea.innerHTML = html;
-  controls.style.display = "none";
-}
+  if(questions.length===0){
+    showDebug('該範圍沒有題目 (questions.length === 0)', true);
+    return;
+  }
 
-prevBtn.onclick = ()=>{ idx--; render(); };
-nextBtn.onclick = ()=>{
-  if(idx===questions.length-1) showResult();
-  else { idx++; render(); }
-};
+  // build UI
+  document.getElementById('title').innerText = `Unit ${unit}：${start}-${end}（10 題）`;
 
-// 如果題庫空
-if(questions.length===0){
-  qArea.innerHTML = '<p>找不到題目，請確認 data.js 中有包含 unit 與 id 的題庫。</p>';
-} else {
+  let idx = 0;
+  let answers = new Array(questions.length).fill(null);
+
+  const qArea = document.getElementById('question-area');
+  const controls = document.getElementById('controls');
+  const prevBtn = document.getElementById('prev');
+  const nextBtn = document.getElementById('next');
+  const progress = document.getElementById('progress');
+
+  function render(){
+    if(idx<0) idx=0;
+    if(idx>=questions.length) idx=questions.length-1;
+    const q = questions[idx];
+    qArea.innerHTML = '';
+    const qBox = document.createElement('div'); qBox.className='qbox';
+    const prompt = document.createElement('div'); prompt.className='prompt'; prompt.textContent = q.word;
+    qBox.appendChild(document.createElement('h2')).textContent = '題 ' + (idx+1);
+    qBox.appendChild(prompt);
+    qBox.appendChild(document.createElement('div')).textContent = '(請選出正確中文意思)';
+
+    const opts = document.createElement('div'); opts.className='opts';
+    let options = [ q.meaning ];
+    let others = normalized.filter(x=>x.meaning !== q.meaning).sort(()=>Math.random()-0.5).slice(0,3).map(x=>x.meaning);
+    options = options.concat(others).sort(()=>Math.random()-0.5);
+
+    q.options = options;
+    q.answerIndex = options.indexOf(q.meaning);
+
+    options.forEach((c,i)=>{
+      const b = document.createElement('button');
+      b.className = 'opt';
+      b.textContent = c || '(無中文)';
+      if(answers[idx]===i) b.classList.add('selected');
+      b.onclick = ()=>{ answers[idx]=i; render(); };
+      opts.appendChild(b);
+    });
+
+    qBox.appendChild(opts);
+    qArea.appendChild(qBox);
+
+    controls.style.display='block';
+    progress.textContent = `已答 ${answers.filter(x=>x!==null).length} / ${questions.length}`;
+    prevBtn.disabled = (idx===0);
+    nextBtn.textContent = (idx===questions.length-1)? '完成並看結果' : '下一題';
+  }
+
+  prevBtn.onclick = ()=>{ idx--; render(); };
+  nextBtn.onclick = ()=>{ if(idx===questions.length-1) showResult(); else { idx++; render(); } };
+
+  function showResult(){
+    let correct=0;
+    let html = '<h2>結果</h2><ol>';
+    for(let i=0;i<questions.length;i++){
+      const q = questions[i]; const a = answers[i];
+      if(a === q.answerIndex) correct++;
+      html += `<li><div>${q.word}</div><div>你的答案：${a===null?'-':q.options[a]}</div><div>正確答案：${q.meaning}</div></li>`;
+    }
+    html += `</ol><p>得分：${correct}/${questions.length}</p><p><a href="index.html">回選單</a></p>`;
+    qArea.innerHTML = html;
+    controls.style.display='none';
+  }
+
   render();
-}
+})(); // main
 </script>
 </body>
 </html>
