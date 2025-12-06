@@ -2021,3 +2021,20 @@ const vocabByUnit = {
     }
   ]
 };
+
+
+// --- backward compatibility: build window.vocabData if not present ---
+(function(){
+  try{
+    if(typeof vocabByUnit !== 'undefined' && (!window.vocabData || window.vocabData.length===0)){
+      window.vocabData = [];
+      Object.keys(vocabByUnit).forEach(function(u){
+        var unitNum = parseInt(u.replace('unit',''),10) || 0;
+        vocabByUnit[u].forEach(function(item){
+          var copy = Object.assign({unit: unitNum}, item);
+          window.vocabData.push(copy);
+        });
+      });
+    }
+  }catch(e){ console && console.warn && console.warn('vocab compat failed', e); }
+})();

@@ -29,3 +29,14 @@ body{font-family:'Noto Sans TC',sans-serif;background:var(--bg);margin:0;color:#
 .score{font-weight:bold;margin-top:12px}
 .link{color:var(--accent);text-decoration:none}
 @media (max-width:600px){.range-btn{flex:1 1 45%}}
+
+
+/* ensure option buttons are dark text on white background */
+.opt{
+  color: #123; /* dark text */
+  background: #fff !important;
+}
+.opt.selected{
+  background: #c7f0d9 !important;
+  color: #123 !important;
+}
